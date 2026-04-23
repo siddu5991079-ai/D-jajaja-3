@@ -296,29 +296,72 @@ async function startDirectStreaming() {
     // =========================================================================
     // 🧠 THE SMART WATCHDOG (Aggressive Auto-Refresh Mode)
     // =========================================================================
-    console.log('\n[*] Smart Engine Connected! Monitoring Video Health 24/7...');
+
+
+    // =========================================================================
+    // 🧠 THE SMART WATCHDOG (Aggressive Fullscreen & Auto-Refresh Mode)
+    // =========================================================================
+    console.log('\n[*] Smart Engine Connected! Monitoring Video Health & Fullscreen State 24/7...');
 
     while (true) {
         if (!browser || !browser.isConnected()) throw new Error("Browser closed.");
 
         const isHealthy = await targetFrame.evaluate(() => {
-            // 🚀 PROJECT 1: Selecting the specific clappr/html5 video element
+            // 1. Video Element Dhoondo
             const v = document.querySelector('video[data-html5-video]') || document.querySelector('video');
-            // Check: video mojud ho, pause na ho, khtam na hui ho, aur ad ki wajah se choti na ho
-            return v && !v.paused && !v.ended && v.clientWidth > (window.innerWidth * 0.5);
+            
+            // Agar video nahi hai, ruki hui hai, ya khatam ho gayi hai toh direct FALSE
+            if (!v || v.paused || v.ended) return false;
+
+            // 2. NAYA CHECK: FULLSCREEN LOGIC
+            // Case A: Check karega agar Native API (F11 wala) se fullscreen hai
+            const isNativeFullscreen = (document.fullscreenElement === v || document.webkitFullscreenElement === v);
+            
+            // Case B: Check karega agar hamara "CSS Force-Stretch Hack" laga hua hai (100vw/100vh)
+            const isCssFullscreen = (v.style.position === 'fixed' && v.style.width === '100vw');
+            
+            // Case C: Agar width poori screen ke 95% se zyada hai toh bhi usay fullscreen manega
+            const isAlmostFullScreen = (v.clientWidth >= window.innerWidth * 0.95);
+
+            // Agar in teeno mein se koi ek bhi TRUE hai, iska matlab stream full screen par sahi chal rahi hai
+            const isFullscreen = isNativeFullscreen || isCssFullscreen || isAlmostFullScreen;
+
+            return isFullscreen;
         }).catch(() => false);
 
         if (!isHealthy) {
             console.log('\n=================================================================');
-            console.log('❌ ❌ ❌ STREAM CRASH / AD INTERRUPT DETECTED! ❌ ❌ ❌');
+            console.log('❌ ❌ ❌ STREAM CRASH / EXITED FULLSCREEN DETECTED! ❌ ❌ ❌');
             console.log('🛑 TRIGGERING AUTO-REFRESH PROTOCOL (Restarting in 3 Sec)...');
             console.log('=================================================================\n');
-            throw new Error("Watchdog detected bad video state."); // Yeh error catch block mein ja kar page refresh karega
+            throw new Error("Watchdog detected video exited fullscreen or stopped playing."); 
         }
 
         await new Promise(r => setTimeout(r, 3000)); // Har 3 second baad monitor karega
     }
-}
+//     console.log('\n[*] Smart Engine Connected! Monitoring Video Health 24/7...');
+
+//     while (true) {
+//         if (!browser || !browser.isConnected()) throw new Error("Browser closed.");
+
+//         const isHealthy = await targetFrame.evaluate(() => {
+//             // 🚀 PROJECT 1: Selecting the specific clappr/html5 video element
+//             const v = document.querySelector('video[data-html5-video]') || document.querySelector('video');
+//             // Check: video mojud ho, pause na ho, khtam na hui ho, aur ad ki wajah se choti na ho
+//             return v && !v.paused && !v.ended && v.clientWidth > (window.innerWidth * 0.5);
+//         }).catch(() => false);
+
+//         if (!isHealthy) {
+//             console.log('\n=================================================================');
+//             console.log('❌ ❌ ❌ STREAM CRASH / AD INTERRUPT DETECTED! ❌ ❌ ❌');
+//             console.log('🛑 TRIGGERING AUTO-REFRESH PROTOCOL (Restarting in 3 Sec)...');
+//             console.log('=================================================================\n');
+//             throw new Error("Watchdog detected bad video state."); // Yeh error catch block mein ja kar page refresh karega
+//         }
+
+//         await new Promise(r => setTimeout(r, 3000)); // Har 3 second baad monitor karega
+//     }
+// }
 
 async function cleanup() {
     if (ffmpegProcess) {
