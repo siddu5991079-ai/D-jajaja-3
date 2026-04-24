@@ -339,6 +339,8 @@ async function startDirectStreaming() {
 
         await new Promise(r => setTimeout(r, 3000)); // Har 3 second baad monitor karega
     }
+
+}
 //     console.log('\n[*] Smart Engine Connected! Monitoring Video Health 24/7...');
 
 //     while (true) {
