@@ -7,7 +7,7 @@ on:
         description: 'Target Stream URL'
         required: true
         type: string
-        default: 'https://dadocric.st/player.php?id=willowextra'
+        default: 'https://dlstreams.com/watch.php?id=598'
       okru_stream_channel: # 🚀 NAYA: OK.ru Stream Channel Selector
         description: 'OK.ru Broadcast Channel (1 to 5)'
         required: true
@@ -35,8 +35,9 @@ on:
           - '40KBps (Ultra-Low 360p)'
           - '110KBps (Balanced 480p)'
         default: '110KBps (Balanced 480p)'
-  schedule:
-    - cron: '0 */5 * * *'
+  # schedule:
+  #   - cron: '0 */5 * * *'
+  # yeh code k matlb hai k yeh action automatically khud ba khud action run huu 
 
 permissions:
   contents: write
