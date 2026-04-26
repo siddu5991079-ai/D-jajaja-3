@@ -1,239 +1,3 @@
-const puppeteer = require('puppeteer-extra');
-const StealthPlugin = require('puppeteer-extra-plugin-stealth');
-puppeteer.use(StealthPlugin());
-
-const { spawn, execSync } = require('child_process');
-const { PuppeteerScreenRecorder } = require('puppeteer-screen-recorder');
-
-// 🚀 Multi-Stream Key Manager
-const STREAM_KEYS = {
-    '1': '14601603391083_14040893622891_puxzrwjniu', 
-    '2': '14601696583275_14041072274027_apdzpdb5xi', 
-    '3': '14617940008555_14072500914795_ohw67ls7ny',
-    '4': '14601972227691_14041593547371_obdhgewlmq',
-    '5': 'YOUR_STREAM_KEY_5_HERE'
-};
-
-const TARGET_URL = process.env.TARGET_URL || 'https://dadocric.st/player.php?id=starsp3&v=m';
-const SELECTED_CHANNEL = process.env.OKRU_STREAM_ID || '1';
-const ACTIVE_STREAM_KEY = STREAM_KEYS[SELECTED_CHANNEL] || STREAM_KEYS['1'];
-
-const RTMP_SERVER = 'rtmp://vsu.okcdn.ru/input/';
-const RTMP_DESTINATION = `${RTMP_SERVER}${ACTIVE_STREAM_KEY}`;
-
-let browser = null;
-let ffmpegProcess = null;
-
-// =========================================================================
-// 🔄 MAIN LOOP
-// =========================================================================
-async function mainLoop() {
-    while (true) {
-        try {
-            await startDirectStreaming();
-        } catch (error) {
-            console.error(`\n[!] ALERT: ${error.message}`);
-            console.log('[*] 🔄 Restarting everything in 3 seconds as requested...');
-            await cleanup();
-            await new Promise(resolve => setTimeout(resolve, 3000));
-        }
-    }
-}
-
-async function startDirectStreaming() {
-    console.log(`[*] Starting browser and FFmpeg...`);
-    console.log(`[+] Broadcasting to OK.ru CHANNEL: ${SELECTED_CHANNEL}`);
-
-    const useProxy = process.env.USE_PROXY === 'ON';
-    const proxyIpPort = process.env.PROXY_IP_PORT || '31.59.20.176:6754';
-    const proxyUser = process.env.PROXY_USER || 'kexwytuq';
-    const proxyPass = process.env.PROXY_PASS || 'fw1k19a4lqfd';
-    
-    const streamQuality = process.env.STREAM_QUALITY || '110KBps (Balanced 480p)';
-
-    const browserArgs = [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--window-size=1280,720',
-        '--kiosk', 
-        '--autoplay-policy=no-user-gesture-required'
-    ];
-
-    if (useProxy) {
-        browserArgs.push(`--proxy-server=http://${proxyIpPort}`);
-    }
-
-    browser = await puppeteer.launch({
-        channel: 'chrome',
-        headless: false, 
-        defaultViewport: { width: 1280, height: 720 },
-        ignoreDefaultArgs: ['--enable-automation'], 
-        args: browserArgs
-    });
-
-    const page = await browser.newPage();
-    const pages = await browser.pages();
-    for (const p of pages) {
-        if (p !== page) await p.close();
-    }
-
-    // Ad-Blocker Logic
-    browser.on('targetcreated', async (target) => {
-        if (target.type() === 'page') {
-            try {
-                const newPage = await target.page();
-                if (newPage && newPage !== page) {
-                    await page.bringToFront(); 
-                    setTimeout(() => newPage.close().catch(() => { }), 2000);
-                }
-            } catch (e) { }
-        }
-    });
-
-    if (useProxy) await page.authenticate({ username: proxyUser, password: proxyPass });
-
-    const displayNum = process.env.DISPLAY || ':99';
-
-    console.log(`[*] Navigating to target URL: ${TARGET_URL}...`);
-    await page.goto(TARGET_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
-
-    // Cloudflare Bypass wait
-    await new Promise(r => setTimeout(r, 10000));
-
-    let targetFrame = null;
-    for (const frame of page.frames()) {
-        try {
-            const isVideo = await frame.evaluate(() => {
-                const vid = document.querySelector('video');
-                return vid && vid.clientWidth > 300;
-            });
-            if (isVideo) targetFrame = frame;
-        } catch (e) { }
-    }
-
-    if (!targetFrame) throw new Error('Video frame not found.');
-
-    // Center Click for Audio
-    const viewport = page.viewport();
-    await page.mouse.click(viewport.width / 2, viewport.height / 2);
-    
-    await targetFrame.evaluate(() => {
-        const v = document.querySelector('video');
-        if (v) { v.muted = false; v.volume = 1.0; v.play(); }
-    });
-
-    // =========================================================================
-    // 📡 FFMPEG BROADCAST (WITH HEARTBEAT LOGS)
-    // =========================================================================
-    function startBroadcast() {
-        if (ffmpegProcess) return; 
-        
-        console.log('\n[*] 🚀 Launching FFmpeg with A/V Sync...');
-        const ffmpegArgs = [
-            '-y', '-use_wallclock_as_timestamps', '1', '-thread_queue_size', '1024',
-            '-f', 'x11grab', '-draw_mouse', '0', '-video_size', '1280x720', '-framerate', '30',
-            '-i', displayNum, '-thread_queue_size', '1024', '-f', 'pulse', '-i', 'default',
-            '-vf', 'scale=854:480',
-            '-c:v', 'libx264', '-preset', 'veryfast', '-profile:v', 'main',
-            '-b:v', '800k', '-maxrate', '850k', '-bufsize', '1700k',
-            '-pix_fmt', 'yuv420p', '-g', '60', '-max_muxing_queue_size', '1024',
-            '-c:a', 'aac', '-b:a', '64k', '-ac', '2', '-ar', '44100',
-            '-async', '1', '-f', 'flv', RTMP_DESTINATION 
-        ];
-
-        ffmpegProcess = spawn('ffmpeg', ffmpegArgs);
-
-        let heartbeatCount = 0;
-        let lastHeartbeatTime = Date.now();
-        const FIVE_MINUTES = 5 * 60 * 1000;
-
-        ffmpegProcess.stderr.on('data', (data) => {
-            const output = data.toString().trim();
-            
-            // 💓 Heartbeat Logic: Pehle kuch logs dikhao, phir har 5 min baad
-            if (output.includes('frame=') && output.includes('fps=')) {
-                heartbeatCount++;
-                const currentTime = Date.now();
-                
-                if (heartbeatCount <= 7) {
-                    console.log(`[FFmpeg Startup ${heartbeatCount}/7]: ${output.substring(0, 80)}`);
-                    if (heartbeatCount === 7) console.log(`\n[✅ Success] Stream is live! Switching to 5-minute heartbeat mode...`);
-                } else if (currentTime - lastHeartbeatTime >= FIVE_MINUTES) {
-                    console.log(`[💓 5-Min Heartbeat]: Stream is stable. ${output.substring(0, 80)}`);
-                    lastHeartbeatTime = currentTime; 
-                }
-            } else if (output.includes('Error') || output.includes('Failed') || output.includes('Past duration')) {
-                console.log(`\n[⚠️ FFmpeg Warning/Error]: ${output}`);
-            }
-        });
-
-        ffmpegProcess.on('close', (code) => console.log(`\n[*] FFmpeg process closed (Code: ${code})`));
-    }
-
-    // Privacy & Fullscreen Logic
-    async function applyPrivacyFullscreen() {
-        await page.evaluate(() => {
-            document.body.style.backgroundColor = 'black';
-            document.querySelectorAll('iframe').forEach(f => {
-                f.style.position = 'fixed'; f.style.top = '0'; f.style.width = '100vw'; f.style.height = '100vh'; f.style.zIndex = '9999';
-            });
-        });
-        await targetFrame.evaluate(() => {
-            const v = document.querySelector('video');
-            if (v) { v.style.width = '100vw'; v.style.height = '100vh'; v.style.objectFit = 'contain'; }
-        });
-    }
-
-    await applyPrivacyFullscreen();
-    startBroadcast();
-
-    // =========================================================================
-    // 🧠 SMART WATCHDOG (Status Logs Added)
-    // =========================================================================
-    let checkCount = 0;
-    while (true) {
-        checkCount++;
-        const status = await targetFrame.evaluate(() => {
-            const v = document.querySelector('video');
-            if (!v || v.ended) return 'DEAD';
-            if (v.readyState < 2) return 'BUFFERING';
-            return 'HEALTHY';
-        }).catch(() => 'ERROR');
-
-        // Har 10th check (takreeban har 30 sec) par Watchdog status print karega
-        if (checkCount % 10 === 0) {
-            console.log(`[Watchdog Status]: Video is ${status}. (Checks: ${checkCount})`);
-        }
-
-        if (status === 'DEAD' || status === 'ERROR') throw new Error("Stream crashed or video element lost.");
-        
-        if (status === 'BUFFERING') {
-            console.log("[!] Buffering detected... waiting for recovery.");
-        }
-
-        await new Promise(r => setTimeout(r, 3000));
-    }
-}
-
-async function cleanup() {
-    if (ffmpegProcess) { ffmpegProcess.kill('SIGKILL'); ffmpegProcess = null; }
-    if (browser) { await browser.close(); browser = null; }
-}
-
-mainLoop();
-
-
-
-
-
-
-
-
-
-
-// 1
-
-
 // const puppeteer = require('puppeteer-extra');
 // const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 // puppeteer.use(StealthPlugin());
@@ -299,7 +63,6 @@ mainLoop();
 //         browserArgs.push(`--proxy-server=http://${proxyIpPort}`);
 //     }
 
-//     console.log(`Launching Browser on Virtual Screen with Proxy: ${useProxy ? 'ON' : 'OFF'}...`);
 //     browser = await puppeteer.launch({
 //         channel: 'chrome',
 //         headless: false, 
@@ -314,13 +77,12 @@ mainLoop();
 //         if (p !== page) await p.close();
 //     }
 
-//     // Aggressive Ad-Popup Blocker
+//     // Ad-Blocker Logic
 //     browser.on('targetcreated', async (target) => {
 //         if (target.type() === 'page') {
 //             try {
 //                 const newPage = await target.page();
 //                 if (newPage && newPage !== page) {
-//                     console.log(`[*] Adware tab detected! Forcing video tab back to foreground...`);
 //                     await page.bringToFront(); 
 //                     setTimeout(() => newPage.close().catch(() => { }), 2000);
 //                 }
@@ -328,266 +90,504 @@ mainLoop();
 //         }
 //     });
 
-//     if (useProxy) {
-//         await page.authenticate({ username: proxyUser, password: proxyPass });
-//     }
+//     if (useProxy) await page.authenticate({ username: proxyUser, password: proxyPass });
 
 //     const displayNum = process.env.DISPLAY || ':99';
 
 //     console.log(`[*] Navigating to target URL: ${TARGET_URL}...`);
 //     await page.goto(TARGET_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
 
-//     console.log('[*] Waiting for potential Cloudflare...');
-//     for (let i = 0; i < 15; i++) {
-//         const title = await page.title();
-//         if (!title.includes('Moment') && !title.includes('Cloudflare')) break;
-//         await new Promise(r => setTimeout(r, 1000));
-//     }
+//     // Cloudflare Bypass wait
+//     await new Promise(r => setTimeout(r, 10000));
 
-//     await new Promise(resolve => setTimeout(resolve, 8000));
-
-//     // =========================================================================
-//     // 🧠 THE SMART SCANNER & CLEANER 
-//     // =========================================================================
 //     let targetFrame = null;
-//     console.log('[*] Scanning iframes for the REAL Live Stream Video...');
 //     for (const frame of page.frames()) {
 //         try {
-//             const isRealLiveStream = await frame.evaluate(() => {
-//                 const vid = document.querySelector('video[data-html5-video]') || document.querySelector('video');
-//                 if (!vid) return false;
-//                 if (vid.clientWidth < 300 || vid.clientHeight < 200) return false;
-//                 return true; 
+//             const isVideo = await frame.evaluate(() => {
+//                 const vid = document.querySelector('video');
+//                 return vid && vid.clientWidth > 300;
 //             });
-
-//             if (isRealLiveStream) {
-//                 targetFrame = frame;
-//                 console.log(`[+] Smart Scanner selected Real Video in frame: ${frame.url() || 'unknown'}`);
-//             }
-
-//             await frame.evaluate(() => {
-//                 const floatedAd = document.getElementById('floated');
-//                 if (floatedAd) floatedAd.remove();
-//             });
+//             if (isVideo) targetFrame = frame;
 //         } catch (e) { }
 //     }
 
-//     if (!targetFrame) throw new Error('No <video> element could be found.');
+//     if (!targetFrame) throw new Error('Video frame not found.');
 
-//     // =========================================================================
-//     // 🔊 AUDIO UNLOCKER: The Center Click
-//     // =========================================================================
-//     console.log('[*] Applying Physical Center Click to register User Action for Audio...');
-//     try {
-//         const viewport = page.viewport();
-//         const centerX = viewport ? viewport.width / 2 : 1280 / 2;
-//         const centerY = viewport ? viewport.height / 2 : 720 / 2;
-//         await page.mouse.click(centerX, centerY, { delay: 100 });
-//         await new Promise(r => setTimeout(r, 2000));
-//     } catch (e) {
-//         console.log('[!] Center click failed: ', e.message);
-//     }
-
-//     console.log('[*] Executing JS Unmute & Volume Max logic...');
-//     await targetFrame.evaluate(async () => {
-//         const video = document.querySelector('video[data-html5-video]') || document.querySelector('video');
-//         if (video) {
-//             video.muted = false; 
-//             video.volume = 1.0; 
-//             await video.play().catch(e => {});
-//         }
+//     // Center Click for Audio
+//     const viewport = page.viewport();
+//     await page.mouse.click(viewport.width / 2, viewport.height / 2);
+    
+//     await targetFrame.evaluate(() => {
+//         const v = document.querySelector('video');
+//         if (v) { v.muted = false; v.volume = 1.0; v.play(); }
 //     });
 
 //     // =========================================================================
-//     // 🛠️ REUSABLE FUNCTIONS & PRIVACY HACK
-//     // =========================================================================
-//     async function applyFullscreenHack() {
-//         console.log('\n[*] Executing Privacy & Fullscreen Script...');
-        
-//         await page.evaluate(() => {
-//             document.body.style.overflow = 'hidden'; // Scroll bar khatam
-//             document.body.style.backgroundColor = 'black'; // Background purely black
-//             const iframes = document.querySelectorAll('iframe');
-//             iframes.forEach(iframe => {
-//                 iframe.style.position = 'fixed';
-//                 iframe.style.top = '0';
-//                 iframe.style.left = '0';
-//                 iframe.style.width = '100vw';
-//                 iframe.style.height = '100vh';
-//                 iframe.style.zIndex = '2147483647';
-//                 iframe.style.backgroundColor = 'black';
-//             });
-//         });
-
-//         await targetFrame.evaluate(async () => {
-//             const vid = document.querySelector('video[data-html5-video]') || document.querySelector('video');
-//             if (!vid) return;
-//             try {
-//                 if (vid.requestFullscreen) await vid.requestFullscreen();
-//                 else if (vid.webkitRequestFullscreen) await vid.webkitRequestFullscreen();
-//             } catch (err) {
-//                 vid.style.position = 'fixed';
-//                 vid.style.top = '0';
-//                 vid.style.left = '0';
-//                 vid.style.width = '100vw';
-//                 vid.style.height = '100vh';
-//                 vid.style.zIndex = '2147483647';
-//                 vid.style.backgroundColor = 'black';
-//                 vid.style.objectFit = 'contain';
-//             }
-//         });
-//         await new Promise(r => setTimeout(r, 2000));
-//     }
-
-//     // =========================================================================
-//     // 📡 FFMPEG BROADCAST (WITH A/V SYNC)
+//     // 📡 FFMPEG BROADCAST (WITH HEARTBEAT LOGS)
 //     // =========================================================================
 //     function startBroadcast() {
 //         if (ffmpegProcess) return; 
         
-//         let ffmpegArgs = [];
-
-//         // Added -async 1 and -max_muxing_queue_size to prevent audio/video desync
-//         if (streamQuality.includes('40KBps')) {
-//             console.log('\n[*] 🚀 FFmpeg Mode: ULTRA-LOW BANDWIDTH (360p @ 20FPS)...');
-//             ffmpegArgs = [
-//                 '-y', '-use_wallclock_as_timestamps', '1', '-thread_queue_size', '1024',
-//                 '-f', 'x11grab', '-draw_mouse', '0', '-video_size', '1280x720', '-framerate', '20',
-//                 '-i', displayNum, '-thread_queue_size', '1024', '-f', 'pulse', '-i', 'default',
-//                 '-vf', 'scale=640:360',
-//                 '-c:v', 'libx264', '-preset', 'veryfast', '-profile:v', 'baseline',
-//                 '-b:v', '200k', '-maxrate', '250k', '-bufsize', '500k',
-//                 '-pix_fmt', 'yuv420p', '-g', '40', '-max_muxing_queue_size', '1024',
-//                 '-c:a', 'aac', '-b:a', '32k', '-ac', '1', '-ar', '44100',
-//                 '-async', '1', '-f', 'flv', RTMP_DESTINATION 
-//             ];
-//         } else {
-//             console.log('\n[*] 🚀 FFmpeg Mode: BALANCED 480p (854x480 @ 30FPS)...');
-//             ffmpegArgs = [
-//                 '-y', '-use_wallclock_as_timestamps', '1', '-thread_queue_size', '1024',
-//                 '-f', 'x11grab', '-draw_mouse', '0', '-video_size', '1280x720', '-framerate', '30',
-//                 '-i', displayNum, '-thread_queue_size', '1024', '-f', 'pulse', '-i', 'default',
-//                 '-vf', 'scale=854:480',
-//                 '-c:v', 'libx264', '-preset', 'veryfast', '-profile:v', 'main',
-//                 '-b:v', '800k', '-maxrate', '850k', '-bufsize', '1700k',
-//                 '-pix_fmt', 'yuv420p', '-g', '60', '-max_muxing_queue_size', '1024',
-//                 '-c:a', 'aac', '-b:a', '64k', '-ac', '2', '-ar', '44100',
-//                 '-async', '1', '-f', 'flv', RTMP_DESTINATION 
-//             ];
-//         }
+//         console.log('\n[*] 🚀 Launching FFmpeg with A/V Sync...');
+//         const ffmpegArgs = [
+//             '-y', '-use_wallclock_as_timestamps', '1', '-thread_queue_size', '1024',
+//             '-f', 'x11grab', '-draw_mouse', '0', '-video_size', '1280x720', '-framerate', '30',
+//             '-i', displayNum, '-thread_queue_size', '1024', '-f', 'pulse', '-i', 'default',
+//             '-vf', 'scale=854:480',
+//             '-c:v', 'libx264', '-preset', 'veryfast', '-profile:v', 'main',
+//             '-b:v', '800k', '-maxrate', '850k', '-bufsize', '1700k',
+//             '-pix_fmt', 'yuv420p', '-g', '60', '-max_muxing_queue_size', '1024',
+//             '-c:a', 'aac', '-b:a', '64k', '-ac', '2', '-ar', '44100',
+//             '-async', '1', '-f', 'flv', RTMP_DESTINATION 
+//         ];
 
 //         ffmpegProcess = spawn('ffmpeg', ffmpegArgs);
 
+//         let heartbeatCount = 0;
+//         let lastHeartbeatTime = Date.now();
+//         const FIVE_MINUTES = 5 * 60 * 1000;
+
 //         ffmpegProcess.stderr.on('data', (data) => {
 //             const output = data.toString().trim();
-//             if (output.includes('Error') || output.includes('Failed')) {
-//                 console.log(`\n[FFmpeg Issue]: ${output}`);
+            
+//             // 💓 Heartbeat Logic: Pehle kuch logs dikhao, phir har 5 min baad
+//             if (output.includes('frame=') && output.includes('fps=')) {
+//                 heartbeatCount++;
+//                 const currentTime = Date.now();
+                
+//                 if (heartbeatCount <= 7) {
+//                     console.log(`[FFmpeg Startup ${heartbeatCount}/7]: ${output.substring(0, 80)}`);
+//                     if (heartbeatCount === 7) console.log(`\n[✅ Success] Stream is live! Switching to 5-minute heartbeat mode...`);
+//                 } else if (currentTime - lastHeartbeatTime >= FIVE_MINUTES) {
+//                     console.log(`[💓 5-Min Heartbeat]: Stream is stable. ${output.substring(0, 80)}`);
+//                     lastHeartbeatTime = currentTime; 
+//                 }
+//             } else if (output.includes('Error') || output.includes('Failed') || output.includes('Past duration')) {
+//                 console.log(`\n[⚠️ FFmpeg Warning/Error]: ${output}`);
 //             }
 //         });
 
-//         ffmpegProcess.on('close', (code) => console.log(`\n[*] FFmpeg exited (Code: ${code})`));
+//         ffmpegProcess.on('close', (code) => console.log(`\n[*] FFmpeg process closed (Code: ${code})`));
 //     }
 
-//     await applyFullscreenHack();
+//     // Privacy & Fullscreen Logic
+//     async function applyPrivacyFullscreen() {
+//         await page.evaluate(() => {
+//             document.body.style.backgroundColor = 'black';
+//             document.querySelectorAll('iframe').forEach(f => {
+//                 f.style.position = 'fixed'; f.style.top = '0'; f.style.width = '100vw'; f.style.height = '100vh'; f.style.zIndex = '9999';
+//             });
+//         });
+//         await targetFrame.evaluate(() => {
+//             const v = document.querySelector('video');
+//             if (v) { v.style.width = '100vw'; v.style.height = '100vh'; v.style.objectFit = 'contain'; }
+//         });
+//     }
+
+//     await applyPrivacyFullscreen();
 //     startBroadcast();
 
 //     // =========================================================================
-//     // 🧠 THE SMART WATCHDOG (With Fallback Overlay)
+//     // 🧠 SMART WATCHDOG (Status Logs Added)
 //     // =========================================================================
-//     console.log('\n[*] Smart Engine Connected! Monitoring Video Health 24/7...');
-
-//     let bufferCounter = 0; 
-
+//     let checkCount = 0;
 //     while (true) {
-//         if (!browser || !browser.isConnected()) throw new Error("Browser closed.");
-
+//         checkCount++;
 //         const status = await targetFrame.evaluate(() => {
-//             const bodyText = document.body.innerText.toLowerCase();
-//             if (bodyText.includes("stream error") || bodyText.includes("could not be loaded")) {
-//                 return 'CRITICAL_ERROR';
-//             }
-
-//             const v = document.querySelector('video[data-html5-video]') || document.querySelector('video');
+//             const v = document.querySelector('video');
 //             if (!v || v.ended) return 'DEAD';
-
-//             // Agar video buffering par hai toh Overlay show karo
-//             if (v.readyState < 2) {
-//                 let overlay = document.getElementById('watchdog-recovery-overlay');
-//                 if (!overlay) {
-//                     overlay = document.createElement('div');
-//                     overlay.id = 'watchdog-recovery-overlay';
-//                     overlay.innerHTML = '<h1 style="color:white; font-family:sans-serif;">Stream is buffering... Please wait!</h1>';
-//                     overlay.style.position = 'fixed';
-//                     overlay.style.top = '0'; overlay.style.left = '0';
-//                     overlay.style.width = '100vw'; overlay.style.height = '100vh';
-//                     overlay.style.backgroundColor = 'black';
-//                     overlay.style.zIndex = '2147483647';
-//                     overlay.style.display = 'flex';
-//                     overlay.style.alignItems = 'center';
-//                     overlay.style.justifyContent = 'center';
-//                     document.body.appendChild(overlay);
-//                 }
-//                 return 'BUFFERING'; 
-//             }
-
-//             // Agar healthy hai toh Overlay hata do
-//             let existingOverlay = document.getElementById('watchdog-recovery-overlay');
-//             if (existingOverlay) existingOverlay.remove();
-
-//             // Strict Fullscreen Check (Privacy maintain karne ke liye)
-//             const isNativeFullscreen = (document.fullscreenElement === v || document.webkitFullscreenElement === v);
-//             const isCssFullscreen = (v.style.position === 'fixed' && v.style.width === '100vw');
-            
-//             if (!isNativeFullscreen && !isCssFullscreen) {
-//                 v.style.position = 'fixed';
-//                 v.style.top = '0';
-//                 v.style.left = '0';
-//                 v.style.width = '100vw';
-//                 v.style.height = '100vh';
-//                 v.style.zIndex = '2147483647';
-//                 v.style.backgroundColor = 'black';
-//                 v.style.objectFit = 'contain';
-//                 return 'HEALED_FULLSCREEN';
-//             }
-
+//             if (v.readyState < 2) return 'BUFFERING';
 //             return 'HEALTHY';
-//         }).catch(() => 'EVAL_ERROR');
+//         }).catch(() => 'ERROR');
 
-//         if (status === 'CRITICAL_ERROR' || status === 'DEAD') {
-//             console.log('\n[!] ❌ STREAM DEAD DETECTED! Restarting process...');
-//             throw new Error("Watchdog detected video dead."); 
+//         // Har 10th check (takreeban har 30 sec) par Watchdog status print karega
+//         if (checkCount % 10 === 0) {
+//             console.log(`[Watchdog Status]: Video is ${status}. (Checks: ${checkCount})`);
 //         }
 
+//         if (status === 'DEAD' || status === 'ERROR') throw new Error("Stream crashed or video element lost.");
+        
 //         if (status === 'BUFFERING') {
-//             bufferCounter++;
-//             console.log(`[!] Video is buffering... showing Holding Screen to viewers. (${bufferCounter}/15)`);
-//             if (bufferCounter > 15) throw new Error("Video stuck in buffering for too long.");
-//         } else {
-//             bufferCounter = 0; 
+//             console.log("[!] Buffering detected... waiting for recovery.");
 //         }
 
-//         await new Promise(r => setTimeout(r, 3000)); 
+//         await new Promise(r => setTimeout(r, 3000));
 //     }
 // }
 
 // async function cleanup() {
-//     if (ffmpegProcess) {
-//         try { ffmpegProcess.stdin.end(); ffmpegProcess.kill('SIGKILL'); } catch (e) { }
-//         ffmpegProcess = null;
-//     }
-//     if (browser) {
-//         try { await browser.close(); } catch (e) { }
-//         browser = null;
-//     }
+//     if (ffmpegProcess) { ffmpegProcess.kill('SIGKILL'); ffmpegProcess = null; }
+//     if (browser) { await browser.close(); browser = null; }
 // }
 
-// process.on('SIGINT', async () => {
-//     console.log('\n[*] Stopping live script cleanly...');
-//     await cleanup();
-//     process.exit(0);
-// });
-
 // mainLoop();
+
+
+
+
+
+
+
+
+
+
+// 1
+
+
+const puppeteer = require('puppeteer-extra');
+const StealthPlugin = require('puppeteer-extra-plugin-stealth');
+puppeteer.use(StealthPlugin());
+
+const { spawn, execSync } = require('child_process');
+const { PuppeteerScreenRecorder } = require('puppeteer-screen-recorder');
+
+// 🚀 Multi-Stream Key Manager
+const STREAM_KEYS = {
+    '1': '14601603391083_14040893622891_puxzrwjniu', 
+    '2': '14601696583275_14041072274027_apdzpdb5xi', 
+    '3': '14617940008555_14072500914795_ohw67ls7ny',
+    '4': '14601972227691_14041593547371_obdhgewlmq',
+    '5': 'YOUR_STREAM_KEY_5_HERE'
+};
+
+const TARGET_URL = process.env.TARGET_URL || 'https://dadocric.st/player.php?id=starsp3&v=m';
+const SELECTED_CHANNEL = process.env.OKRU_STREAM_ID || '1';
+const ACTIVE_STREAM_KEY = STREAM_KEYS[SELECTED_CHANNEL] || STREAM_KEYS['1'];
+
+const RTMP_SERVER = 'rtmp://vsu.okcdn.ru/input/';
+const RTMP_DESTINATION = `${RTMP_SERVER}${ACTIVE_STREAM_KEY}`;
+
+let browser = null;
+let ffmpegProcess = null;
+
+// =========================================================================
+// 🔄 MAIN LOOP
+// =========================================================================
+async function mainLoop() {
+    while (true) {
+        try {
+            await startDirectStreaming();
+        } catch (error) {
+            console.error(`\n[!] ALERT: ${error.message}`);
+            console.log('[*] 🔄 Restarting everything in 3 seconds as requested...');
+            await cleanup();
+            await new Promise(resolve => setTimeout(resolve, 3000));
+        }
+    }
+}
+
+async function startDirectStreaming() {
+    console.log(`[*] Starting browser and FFmpeg...`);
+    console.log(`[+] Broadcasting to OK.ru CHANNEL: ${SELECTED_CHANNEL}`);
+
+    const useProxy = process.env.USE_PROXY === 'ON';
+    const proxyIpPort = process.env.PROXY_IP_PORT || '31.59.20.176:6754';
+    const proxyUser = process.env.PROXY_USER || 'kexwytuq';
+    const proxyPass = process.env.PROXY_PASS || 'fw1k19a4lqfd';
+    
+    const streamQuality = process.env.STREAM_QUALITY || '110KBps (Balanced 480p)';
+
+    const browserArgs = [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--window-size=1280,720',
+        '--kiosk', 
+        '--autoplay-policy=no-user-gesture-required'
+    ];
+
+    if (useProxy) {
+        browserArgs.push(`--proxy-server=http://${proxyIpPort}`);
+    }
+
+    console.log(`Launching Browser on Virtual Screen with Proxy: ${useProxy ? 'ON' : 'OFF'}...`);
+    browser = await puppeteer.launch({
+        channel: 'chrome',
+        headless: false, 
+        defaultViewport: { width: 1280, height: 720 },
+        ignoreDefaultArgs: ['--enable-automation'], 
+        args: browserArgs
+    });
+
+    const page = await browser.newPage();
+    const pages = await browser.pages();
+    for (const p of pages) {
+        if (p !== page) await p.close();
+    }
+
+    // Aggressive Ad-Popup Blocker
+    browser.on('targetcreated', async (target) => {
+        if (target.type() === 'page') {
+            try {
+                const newPage = await target.page();
+                if (newPage && newPage !== page) {
+                    console.log(`[*] Adware tab detected! Forcing video tab back to foreground...`);
+                    await page.bringToFront(); 
+                    setTimeout(() => newPage.close().catch(() => { }), 2000);
+                }
+            } catch (e) { }
+        }
+    });
+
+    if (useProxy) {
+        await page.authenticate({ username: proxyUser, password: proxyPass });
+    }
+
+    const displayNum = process.env.DISPLAY || ':99';
+
+    console.log(`[*] Navigating to target URL: ${TARGET_URL}...`);
+    await page.goto(TARGET_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
+
+    console.log('[*] Waiting for potential Cloudflare...');
+    for (let i = 0; i < 15; i++) {
+        const title = await page.title();
+        if (!title.includes('Moment') && !title.includes('Cloudflare')) break;
+        await new Promise(r => setTimeout(r, 1000));
+    }
+
+    await new Promise(resolve => setTimeout(resolve, 8000));
+
+    // =========================================================================
+    // 🧠 THE SMART SCANNER & CLEANER 
+    // =========================================================================
+    let targetFrame = null;
+    console.log('[*] Scanning iframes for the REAL Live Stream Video...');
+    for (const frame of page.frames()) {
+        try {
+            const isRealLiveStream = await frame.evaluate(() => {
+                const vid = document.querySelector('video[data-html5-video]') || document.querySelector('video');
+                if (!vid) return false;
+                if (vid.clientWidth < 300 || vid.clientHeight < 200) return false;
+                return true; 
+            });
+
+            if (isRealLiveStream) {
+                targetFrame = frame;
+                console.log(`[+] Smart Scanner selected Real Video in frame: ${frame.url() || 'unknown'}`);
+            }
+
+            await frame.evaluate(() => {
+                const floatedAd = document.getElementById('floated');
+                if (floatedAd) floatedAd.remove();
+            });
+        } catch (e) { }
+    }
+
+    if (!targetFrame) throw new Error('No <video> element could be found.');
+
+    // =========================================================================
+    // 🔊 AUDIO UNLOCKER: The Center Click
+    // =========================================================================
+    console.log('[*] Applying Physical Center Click to register User Action for Audio...');
+    try {
+        const viewport = page.viewport();
+        const centerX = viewport ? viewport.width / 2 : 1280 / 2;
+        const centerY = viewport ? viewport.height / 2 : 720 / 2;
+        await page.mouse.click(centerX, centerY, { delay: 100 });
+        await new Promise(r => setTimeout(r, 2000));
+    } catch (e) {
+        console.log('[!] Center click failed: ', e.message);
+    }
+
+    console.log('[*] Executing JS Unmute & Volume Max logic...');
+    await targetFrame.evaluate(async () => {
+        const video = document.querySelector('video[data-html5-video]') || document.querySelector('video');
+        if (video) {
+            video.muted = false; 
+            video.volume = 1.0; 
+            await video.play().catch(e => {});
+        }
+    });
+
+    // =========================================================================
+    // 🛠️ REUSABLE FUNCTIONS & PRIVACY HACK
+    // =========================================================================
+    async function applyFullscreenHack() {
+        console.log('\n[*] Executing Privacy & Fullscreen Script...');
+        
+        await page.evaluate(() => {
+            document.body.style.overflow = 'hidden'; // Scroll bar khatam
+            document.body.style.backgroundColor = 'black'; // Background purely black
+            const iframes = document.querySelectorAll('iframe');
+            iframes.forEach(iframe => {
+                iframe.style.position = 'fixed';
+                iframe.style.top = '0';
+                iframe.style.left = '0';
+                iframe.style.width = '100vw';
+                iframe.style.height = '100vh';
+                iframe.style.zIndex = '2147483647';
+                iframe.style.backgroundColor = 'black';
+            });
+        });
+
+        await targetFrame.evaluate(async () => {
+            const vid = document.querySelector('video[data-html5-video]') || document.querySelector('video');
+            if (!vid) return;
+            try {
+                if (vid.requestFullscreen) await vid.requestFullscreen();
+                else if (vid.webkitRequestFullscreen) await vid.webkitRequestFullscreen();
+            } catch (err) {
+                vid.style.position = 'fixed';
+                vid.style.top = '0';
+                vid.style.left = '0';
+                vid.style.width = '100vw';
+                vid.style.height = '100vh';
+                vid.style.zIndex = '2147483647';
+                vid.style.backgroundColor = 'black';
+                vid.style.objectFit = 'contain';
+            }
+        });
+        await new Promise(r => setTimeout(r, 2000));
+    }
+
+    // =========================================================================
+    // 📡 FFMPEG BROADCAST (WITH A/V SYNC)
+    // =========================================================================
+    function startBroadcast() {
+        if (ffmpegProcess) return; 
+        
+        let ffmpegArgs = [];
+
+        // Added -async 1 and -max_muxing_queue_size to prevent audio/video desync
+        if (streamQuality.includes('40KBps')) {
+            console.log('\n[*] 🚀 FFmpeg Mode: ULTRA-LOW BANDWIDTH (360p @ 20FPS)...');
+            ffmpegArgs = [
+                '-y', '-use_wallclock_as_timestamps', '1', '-thread_queue_size', '1024',
+                '-f', 'x11grab', '-draw_mouse', '0', '-video_size', '1280x720', '-framerate', '20',
+                '-i', displayNum, '-thread_queue_size', '1024', '-f', 'pulse', '-i', 'default',
+                '-vf', 'scale=640:360',
+                '-c:v', 'libx264', '-preset', 'veryfast', '-profile:v', 'baseline',
+                '-b:v', '200k', '-maxrate', '250k', '-bufsize', '500k',
+                '-pix_fmt', 'yuv420p', '-g', '40', '-max_muxing_queue_size', '1024',
+                '-c:a', 'aac', '-b:a', '32k', '-ac', '1', '-ar', '44100',
+                '-async', '1', '-f', 'flv', RTMP_DESTINATION 
+            ];
+        } else {
+            console.log('\n[*] 🚀 FFmpeg Mode: BALANCED 480p (854x480 @ 30FPS)...');
+            ffmpegArgs = [
+                '-y', '-use_wallclock_as_timestamps', '1', '-thread_queue_size', '1024',
+                '-f', 'x11grab', '-draw_mouse', '0', '-video_size', '1280x720', '-framerate', '30',
+                '-i', displayNum, '-thread_queue_size', '1024', '-f', 'pulse', '-i', 'default',
+                '-vf', 'scale=854:480',
+                '-c:v', 'libx264', '-preset', 'veryfast', '-profile:v', 'main',
+                '-b:v', '800k', '-maxrate', '850k', '-bufsize', '1700k',
+                '-pix_fmt', 'yuv420p', '-g', '60', '-max_muxing_queue_size', '1024',
+                '-c:a', 'aac', '-b:a', '64k', '-ac', '2', '-ar', '44100',
+                '-async', '1', '-f', 'flv', RTMP_DESTINATION 
+            ];
+        }
+
+        ffmpegProcess = spawn('ffmpeg', ffmpegArgs);
+
+        ffmpegProcess.stderr.on('data', (data) => {
+            const output = data.toString().trim();
+            if (output.includes('Error') || output.includes('Failed')) {
+                console.log(`\n[FFmpeg Issue]: ${output}`);
+            }
+        });
+
+        ffmpegProcess.on('close', (code) => console.log(`\n[*] FFmpeg exited (Code: ${code})`));
+    }
+
+    await applyFullscreenHack();
+    startBroadcast();
+
+    // =========================================================================
+    // 🧠 THE SMART WATCHDOG (With Fallback Overlay)
+    // =========================================================================
+    console.log('\n[*] Smart Engine Connected! Monitoring Video Health 24/7...');
+
+    let bufferCounter = 0; 
+
+    while (true) {
+        if (!browser || !browser.isConnected()) throw new Error("Browser closed.");
+
+        const status = await targetFrame.evaluate(() => {
+            const bodyText = document.body.innerText.toLowerCase();
+            if (bodyText.includes("stream error") || bodyText.includes("could not be loaded")) {
+                return 'CRITICAL_ERROR';
+            }
+
+            const v = document.querySelector('video[data-html5-video]') || document.querySelector('video');
+            if (!v || v.ended) return 'DEAD';
+
+            // Agar video buffering par hai toh Overlay show karo
+            if (v.readyState < 2) {
+                let overlay = document.getElementById('watchdog-recovery-overlay');
+                if (!overlay) {
+                    overlay = document.createElement('div');
+                    overlay.id = 'watchdog-recovery-overlay';
+                    overlay.innerHTML = '<h1 style="color:white; font-family:sans-serif;">Stream is buffering... Please wait!</h1>';
+                    overlay.style.position = 'fixed';
+                    overlay.style.top = '0'; overlay.style.left = '0';
+                    overlay.style.width = '100vw'; overlay.style.height = '100vh';
+                    overlay.style.backgroundColor = 'black';
+                    overlay.style.zIndex = '2147483647';
+                    overlay.style.display = 'flex';
+                    overlay.style.alignItems = 'center';
+                    overlay.style.justifyContent = 'center';
+                    document.body.appendChild(overlay);
+                }
+                return 'BUFFERING'; 
+            }
+
+            // Agar healthy hai toh Overlay hata do
+            let existingOverlay = document.getElementById('watchdog-recovery-overlay');
+            if (existingOverlay) existingOverlay.remove();
+
+            // Strict Fullscreen Check (Privacy maintain karne ke liye)
+            const isNativeFullscreen = (document.fullscreenElement === v || document.webkitFullscreenElement === v);
+            const isCssFullscreen = (v.style.position === 'fixed' && v.style.width === '100vw');
+            
+            if (!isNativeFullscreen && !isCssFullscreen) {
+                v.style.position = 'fixed';
+                v.style.top = '0';
+                v.style.left = '0';
+                v.style.width = '100vw';
+                v.style.height = '100vh';
+                v.style.zIndex = '2147483647';
+                v.style.backgroundColor = 'black';
+                v.style.objectFit = 'contain';
+                return 'HEALED_FULLSCREEN';
+            }
+
+            return 'HEALTHY';
+        }).catch(() => 'EVAL_ERROR');
+
+        if (status === 'CRITICAL_ERROR' || status === 'DEAD') {
+            console.log('\n[!] ❌ STREAM DEAD DETECTED! Restarting process...');
+            throw new Error("Watchdog detected video dead."); 
+        }
+
+        if (status === 'BUFFERING') {
+            bufferCounter++;
+            console.log(`[!] Video is buffering... showing Holding Screen to viewers. (${bufferCounter}/15)`);
+            if (bufferCounter > 15) throw new Error("Video stuck in buffering for too long.");
+        } else {
+            bufferCounter = 0; 
+        }
+
+        await new Promise(r => setTimeout(r, 3000)); 
+    }
+}
+
+async function cleanup() {
+    if (ffmpegProcess) {
+        try { ffmpegProcess.stdin.end(); ffmpegProcess.kill('SIGKILL'); } catch (e) { }
+        ffmpegProcess = null;
+    }
+    if (browser) {
+        try { await browser.close(); } catch (e) { }
+        browser = null;
+    }
+}
+
+process.on('SIGINT', async () => {
+    console.log('\n[*] Stopping live script cleanly...');
+    await cleanup();
+    process.exit(0);
+});
+
+mainLoop();
 
 
 
