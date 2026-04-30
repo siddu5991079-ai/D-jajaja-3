@@ -833,14 +833,14 @@ async function startDirectStreaming() {
     const proxyPass = process.env.PROXY_PASS || 'fw1k19a4lqfd';
     
     const streamQuality = process.env.STREAM_QUALITY || '110KBps (Balanced 480p)';
-    const customPlaySelector = process.env.PLAY_BUTTON_SELECTOR || ''; // NAYA: Custom Selector Get Kiya
+    const customPlaySelector = process.env.PLAY_BUTTON_SELECTOR || ''; 
 
     const browserArgs = [
         '--no-sandbox',
         '--disable-setuid-sandbox',
         '--window-size=1280,720',
         '--kiosk', 
-        '--autoplay-policy=no-user-gesture-required' // Yeh Chrome ko baghair click ke aawaz chalane ki ijazat deta hai
+        '--autoplay-policy=no-user-gesture-required'
     ];
 
     if (useProxy) {
@@ -923,53 +923,73 @@ async function startDirectStreaming() {
     if (!targetFrame) throw new Error('No <video> element could be found.');
 
     // =========================================================================
-    // 🚀 NEW UPGRADE: PLAY BUTTON CLICKER & AUDIO CHECKER LOOP
+    // 🚀 NEW UPGRADE V2: HARDWARE PLAY BUTTON CLICKER & AUDIO CHECKER LOOP
     // =========================================================================
     console.log('[*] Checking if stream needs manual Play click & verifying Audio...');
-    await targetFrame.evaluate(async (selector) => {
-        const delay = (ms) => new Promise(res => setTimeout(res, ms));
-
-        // Loop: Jab tak play na ho jaye, click aur check karta rahega (Max 20 attempts)
-        for (let i = 0; i < 20; i++) {
-            const video = document.querySelector('video[data-html5-video]') || document.querySelector('video');
-            
-            if (video && !video.paused && video.currentTime > 0) {
-                // Video chal rahi hai, ab audio on aur full kar do
-                video.muted = false;
-                video.volume = 1.0;
-                break; // Loop khatam karo
+    
+    for (let i = 0; i < 15; i++) {
+        // Check if video is already playing
+        const isPlaying = await targetFrame.evaluate(() => {
+            const v = document.querySelector('video[data-html5-video]') || document.querySelector('video');
+            if (v && !v.paused && v.currentTime > 0) {
+                v.muted = false;
+                v.volume = 1.0;
+                return true;
             }
+            return false;
+        }).catch(() => false);
 
-            // Agar custom selector diya hai toh usko click karega, warna default ko try karega
-            let playBtn = null;
-            if (selector) {
-                playBtn = document.querySelector(selector);
-            } else {
-                // Fallback default play buttons
-                const defaults = ['.jw-icon-display', '.play-button', 'button[aria-label="Play"]', '.clappr-play'];
-                for (let sel of defaults) {
-                    playBtn = document.querySelector(sel);
-                    if (playBtn) break;
-                }
-            }
-
-            if (playBtn) {
-                playBtn.click();
-            } else if (video) {
-                // Agar button na mile toh direct video element ko play karne ki koshish karo
-                video.play().catch(e => {});
-            }
-
-            await delay(2000); // 2 second wait kar ke dobara check karega loop mein
+        if (isPlaying) {
+            console.log('[+] Video is successfully PLAYING and Audio is UNMUTED!');
+            break; // Loop khatam, aagay barho
         }
-    }, customPlaySelector);
+
+        console.log(`[*] Attempt ${i+1}: Trying to start the video...`);
+        
+        // METHOD 1: Puppeteer Native Click on Custom Selector
+        if (customPlaySelector) {
+            try {
+                await targetFrame.waitForSelector(customPlaySelector, { timeout: 2000 });
+                await targetFrame.click(customPlaySelector);
+                console.log(`[+] Sent Native Mouse Click to custom selector: ${customPlaySelector}`);
+            } catch (e) { }
+        }
+
+        // METHOD 2: Javascript Eval Clicks & Play (For hidden buttons)
+        await targetFrame.evaluate((selector) => {
+            if (selector) {
+                let btn = document.querySelector(selector);
+                if (btn) btn.click();
+            }
+            const defaults = ['.jw-icon-display', '.play-button', 'button[aria-label="Play"]', '.clappr-play'];
+            for (let sel of defaults) {
+                let btn = document.querySelector(sel);
+                if (btn) btn.click();
+            }
+            let v = document.querySelector('video[data-html5-video]') || document.querySelector('video');
+            if (v) v.play().catch(e=>{});
+        }, customPlaySelector).catch(() => {});
+
+        // METHOD 3: ULTIMATE FALLBACK - Hardware click on the CENTER of the iframe
+        try {
+            const frameElement = await targetFrame.frameElement();
+            const boundingBox = await frameElement.boundingBox();
+            if (boundingBox) {
+                const centerX = boundingBox.x + (boundingBox.width / 2);
+                const centerY = boundingBox.y + (boundingBox.height / 2);
+                await page.mouse.click(centerX, centerY);
+                console.log(`[+] Sent Hardware Mouse Click to the exact center of the video player.`);
+            }
+        } catch(e) {}
+
+        await new Promise(r => setTimeout(r, 3000)); // Har koshish ke baad 3 seconds wait
+    }
 
     // =========================================================================
     // 🔊 AUDIO UNLOCKER + UI HIDER (The Magic Fix)
     // =========================================================================
     console.log('[*] Stealth Mode: Hiding player UI...');
     await targetFrame.evaluate(async () => {
-        // 1. CSS Injection: Player ke tamaam buttons, overlays aur unmute dabbon ko hamesha ke liye gayab kar do
         const style = document.createElement('style');
         style.innerHTML = `
             .jw-controls, .jw-ui, .plyr__controls, .vjs-control-bar, .clappr-core, 
@@ -1096,7 +1116,6 @@ async function startDirectStreaming() {
                     overlay = document.createElement('div');
                     overlay.id = 'main-watchdog-overlay';
                     
-                    // ******************** STYLISH LOADING ADDED HERE ********************
                     overlay.innerHTML = `
                         <style>
                             @keyframes spin { 
@@ -1134,7 +1153,6 @@ async function startDirectStreaming() {
                             <div class="reassurance-text">कृपया प्रतीक्षा करें, यह शीघ्र ही फिर से शुरू होगा!</div>
                         </div>
                     `;
-                    // **************************************************************************
                     
                     overlay.style.position = 'fixed';
                     overlay.style.top = '0';
@@ -1196,7 +1214,6 @@ setTimeout(async () => {
     const token = process.env.GH_PAT;
     const ref = process.env.GITHUB_REF_NAME || 'main';
     
-    // Image ke mutabiq aapki file ka naam main.yml hai
     const workflowFileName = 'main.yml'; 
 
     if (!repo || !token) {
