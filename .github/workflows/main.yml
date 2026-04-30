@@ -76,7 +76,7 @@ jobs:
         sudo apt-get install -y ffmpeg xvfb pulseaudio dbus-x11
 
     - name: Install Required Packages
-      run: npm install puppeteer puppeteer-extra puppeteer-extra-plugin-stealth puppeteer-screen-recorderhttp://googleusercontent.com/image_generation_content/168
+      run: npm install puppeteer puppeteer-extra puppeteer-extra-plugin-stealth puppeteer-screen-recorder
 
       
 
