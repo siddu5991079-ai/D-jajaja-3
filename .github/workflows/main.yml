@@ -8,7 +8,7 @@ on:
         required: true
         type: string
         default: 'https://dlstreams.com/watch.php?id=598'
-      okru_stream_channel: # 🚀 OK.ru Stream Channel Selector
+      okru_stream_channel: 
         description: 'OK.ru Broadcast Channel (1 to 5)'
         required: true
         type: choice
@@ -35,23 +35,11 @@ on:
           - '40KBps (Ultra-Low 360p)'
           - '110KBps (Balanced 480p)'
         default: '110KBps (Balanced 480p)'
-      # =========================================================================
-      # [UPGRADE INPUTS] - MANUAL INTERACTION SETTINGS
-      # Examples:
-      #   1. By Property (aria-label):  [aria-label="Play"]  <-- Example from image
-      #   2. By Class: button.play-button
-      #   3. By Multiple: .player-btn, #start-btn
-      #   4. Direct Document Click: javascript:document.getElementById("play-id").click()
-      # =========================================================================
-      play_button_selector:
-        description: 'Play Button Selector (Optional, with examples above)'
+      play_button_selector: # 🚀 NAYA: Manual Play Button Input
+        description: 'Custom Play Button Selector (e.g. [aria-label="Play"])'
         required: false
         type: string
         default: ''
-
-  # schedule:
-  #   - cron: '0 */5 * * *'
-  # yeh code k matlb hai k yeh action automatically khud ba khud action run huu
 
 permissions:
   contents: write
@@ -77,6 +65,24 @@ jobs:
 
     - name: Install Required Packages
       run: npm install puppeteer puppeteer-extra puppeteer-extra-plugin-stealth puppeteer-screen-recorder
+
+    - name: Start Live Stream
+      env:
+        GH_PAT: ${{ secrets.GH_PAT }}
+        GITHUB_REPOSITORY: ${{ github.repository }}
+        GITHUB_REF_NAME: ${{ github.ref_name }}
+        TARGET_URL: ${{ github.event.inputs.target_url || 'https://dadocric.st/player.php?id=starsp3&v=m' }}
+        OKRU_STREAM_ID: ${{ github.event.inputs.okru_stream_channel || '1' }}
+        USE_PROXY: ${{ github.event.inputs.use_proxy || 'OFF' }}
+        STREAM_QUALITY: ${{ github.event.inputs.stream_quality || '110KBps (Balanced 480p)' }}
+        PLAY_BUTTON_SELECTOR: ${{ github.event.inputs.play_button_selector }} # 🚀 NAYA: Node.js ko bhej raha hai
+      run: |
+        pulseaudio -D --exit-idle-time=-1
+        pacmd load-module module-virtual-sink sink_name=v1
+        pacmd set-default-sink v1
+        pacmd set-default-source v1.monitor
+
+        xvfb-run -s "-screen 0 1280x720x24 -ac" node browser.js
 
       
 
