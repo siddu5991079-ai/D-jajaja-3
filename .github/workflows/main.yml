@@ -1,4 +1,72 @@
-name: Debug Video Recorder
+# name: Debug Video Recorder
+
+# on:
+#   workflow_dispatch:
+#     inputs:
+#       target_url:
+#         description: 'Target Stream URL'
+#         required: true
+#         type: string
+#         default: 'https://dlstreams.com/watch.php?id=598'
+#       play_button_selector: 
+#         description: 'Custom Play Button Selector (e.g. [aria-label="Play"])'
+#         required: false
+#         type: string
+#         default: ''
+
+# permissions:
+#   contents: write # 👈 Yeh permission Release create karne ke liye zaroori hai
+
+# jobs:
+#   debug_stream:
+#     runs-on: ubuntu-latest
+#     timeout-minutes: 15 # Debugging ke liye sirf 15 minute ki limit
+
+#     steps:
+#     - name: Get Code
+#       uses: actions/checkout@v3
+
+#     - name: Setup Node.js
+#       uses: actions/setup-node@v3
+#       with:
+#         node-version: '18'
+
+#     - name: Install Dependencies
+#       run: |
+#         sudo apt-get update
+#         sudo apt-get install -y xvfb pulseaudio dbus-x11
+
+#     - name: Install Required Packages
+#       run: npm install puppeteer puppeteer-extra puppeteer-extra-plugin-stealth puppeteer-screen-recorder
+
+#     - name: Run Debug Script (Records for 25s)
+#       env:
+#         TARGET_URL: ${{ github.event.inputs.target_url }}
+#         PLAY_BUTTON_SELECTOR: ${{ github.event.inputs.play_button_selector }} 
+#       run: |
+#         pulseaudio -D --exit-idle-time=-1
+#         pacmd load-module module-virtual-sink sink_name=v1
+#         pacmd set-default-sink v1
+#         pacmd set-default-source v1.monitor
+
+#         # Run script. Yeh 25 seconds baad khud exit ho jayega.
+#         xvfb-run -s "-screen 0 1280x720x24 -ac" node browser.js
+
+#     # 🚀 NAYA STEP: RELEASES MEIN UPLOAD KAREGA
+#     - name: Upload Recording to GitHub Releases
+#       uses: softprops/action-gh-release@v1
+#       with:
+#         tag_name: debug-run-${{ github.run_id }}
+#         name: Debug Video - Run ${{ github.run_id }}
+#         body: "Automated screen recording for debugging video player clicks."
+#         files: debug_recording.mp4
+#       env:
+#         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      
+
+
+
+name: 24/7 Live Stream Bot
 
 on:
   workflow_dispatch:
@@ -8,6 +76,33 @@ on:
         required: true
         type: string
         default: 'https://dlstreams.com/watch.php?id=598'
+      okru_stream_channel: 
+        description: 'OK.ru Broadcast Channel (1 to 5)'
+        required: true
+        type: choice
+        options:
+          - '1'
+          - '2'
+          - '3'
+          - '4'
+          - '5'
+        default: '1'
+      use_proxy:
+        description: 'Use Proxy (ON or OFF)'
+        required: true
+        type: choice
+        options:
+          - 'OFF'
+          - 'ON'
+        default: 'OFF'
+      stream_quality:
+        description: 'Internet Speed / Stream Quality'
+        required: true
+        type: choice
+        options:
+          - '40KBps (Ultra-Low 360p)'
+          - '110KBps (Balanced 480p)'
+        default: '110KBps (Balanced 480p)'
       play_button_selector: 
         description: 'Custom Play Button Selector (e.g. [aria-label="Play"])'
         required: false
@@ -15,12 +110,12 @@ on:
         default: ''
 
 permissions:
-  contents: write # 👈 Yeh permission Release create karne ke liye zaroori hai
+  contents: write
 
 jobs:
-  debug_stream:
+  stream:
     runs-on: ubuntu-latest
-    timeout-minutes: 15 # Debugging ke liye sirf 15 minute ki limit
+    timeout-minutes: 360 # 6 Hours Limit set for safety
 
     steps:
     - name: Get Code
@@ -31,40 +126,31 @@ jobs:
       with:
         node-version: '18'
 
-    - name: Install Dependencies
+    - name: Install FFmpeg, Virtual Display, & Audio Server
       run: |
         sudo apt-get update
-        sudo apt-get install -y xvfb pulseaudio dbus-x11
+        sudo apt-get install -y ffmpeg xvfb pulseaudio dbus-x11
 
     - name: Install Required Packages
       run: npm install puppeteer puppeteer-extra puppeteer-extra-plugin-stealth puppeteer-screen-recorder
 
-    - name: Run Debug Script (Records for 25s)
+    - name: Start Live Stream
       env:
-        TARGET_URL: ${{ github.event.inputs.target_url }}
-        PLAY_BUTTON_SELECTOR: ${{ github.event.inputs.play_button_selector }} 
+        GH_PAT: ${{ secrets.GH_PAT }}
+        GITHUB_REPOSITORY: ${{ github.repository }}
+        GITHUB_REF_NAME: ${{ github.ref_name }}
+        TARGET_URL: ${{ github.event.inputs.target_url || 'https://dadocric.st/player.php?id=starsp3&v=m' }}
+        OKRU_STREAM_ID: ${{ github.event.inputs.okru_stream_channel || '1' }}
+        USE_PROXY: ${{ github.event.inputs.use_proxy || 'OFF' }}
+        STREAM_QUALITY: ${{ github.event.inputs.stream_quality || '110KBps (Balanced 480p)' }}
+        PLAY_BUTTON_SELECTOR: ${{ github.event.inputs.play_button_selector }}
       run: |
         pulseaudio -D --exit-idle-time=-1
         pacmd load-module module-virtual-sink sink_name=v1
         pacmd set-default-sink v1
         pacmd set-default-source v1.monitor
 
-        # Run script. Yeh 25 seconds baad khud exit ho jayega.
         xvfb-run -s "-screen 0 1280x720x24 -ac" node browser.js
-
-    # 🚀 NAYA STEP: RELEASES MEIN UPLOAD KAREGA
-    - name: Upload Recording to GitHub Releases
-      uses: softprops/action-gh-release@v1
-      with:
-        tag_name: debug-run-${{ github.run_id }}
-        name: Debug Video - Run ${{ github.run_id }}
-        body: "Automated screen recording for debugging video player clicks."
-        files: debug_recording.mp4
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      
-
-
 
 
 
