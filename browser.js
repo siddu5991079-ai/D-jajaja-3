@@ -1136,6 +1136,15 @@
 
 
 
+
+
+
+
+
+
+
+
+
 const puppeteer = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 puppeteer.use(StealthPlugin());
@@ -1162,6 +1171,9 @@ const RTMP_DESTINATION = `${RTMP_SERVER}${ACTIVE_STREAM_KEY}`;
 let browser = null;
 let ffmpegProcess = null;
 
+// =========================================================================
+// 🔄 MAIN LOOP
+// =========================================================================
 async function mainLoop() {
     while (true) {
         try {
@@ -1183,21 +1195,20 @@ async function startDirectStreaming() {
     const proxyIpPort = process.env.PROXY_IP_PORT || '31.59.20.176:6754';
     const proxyUser = process.env.PROXY_USER || 'kexwytuq';
     const proxyPass = process.env.PROXY_PASS || 'fw1k19a4lqfd';
+    
     const streamQuality = process.env.STREAM_QUALITY || '110KBps (Balanced 480p)';
-
-    // 🛡️ Anti-Bot User Agent
-    const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 
     const browserArgs = [
         '--no-sandbox',
         '--disable-setuid-sandbox',
         '--window-size=1280,720',
         '--kiosk', 
-        '--autoplay-policy=no-user-gesture-required',
-        '--disable-blink-features=AutomationControlled'
+        '--autoplay-policy=no-user-gesture-required' // Yeh Chrome ko baghair click ke aawaz chalane ki ijazat deta hai
     ];
 
-    if (useProxy) browserArgs.push(`--proxy-server=http://${proxyIpPort}`);
+    if (useProxy) {
+        browserArgs.push(`--proxy-server=http://${proxyIpPort}`);
+    }
 
     console.log(`Launching Browser on Virtual Screen with Proxy: ${useProxy ? 'ON' : 'OFF'}...`);
     browser = await puppeteer.launch({
@@ -1209,18 +1220,18 @@ async function startDirectStreaming() {
     });
 
     const page = await browser.newPage();
-    await page.setUserAgent(USER_AGENT);
-
     const pages = await browser.pages();
     for (const p of pages) {
         if (p !== page) await p.close();
     }
 
+    // Aggressive Ad-Popup Blocker
     browser.on('targetcreated', async (target) => {
         if (target.type() === 'page') {
             try {
                 const newPage = await target.page();
                 if (newPage && newPage !== page) {
+                    console.log(`[*] Adware tab detected! Forcing video tab back to foreground...`);
                     await page.bringToFront(); 
                     setTimeout(() => newPage.close().catch(() => { }), 2000);
                 }
@@ -1228,29 +1239,35 @@ async function startDirectStreaming() {
         }
     });
 
-    if (useProxy) await page.authenticate({ username: proxyUser, password: proxyPass });
+    if (useProxy) {
+        await page.authenticate({ username: proxyUser, password: proxyPass });
+    }
 
     const displayNum = process.env.DISPLAY || ':99';
 
     console.log(`[*] Navigating to target URL: ${TARGET_URL}...`);
     await page.goto(TARGET_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
 
+    console.log('[*] Waiting for potential Cloudflare...');
     for (let i = 0; i < 15; i++) {
         const title = await page.title();
         if (!title.includes('Moment') && !title.includes('Cloudflare')) break;
         await new Promise(r => setTimeout(r, 1000));
     }
 
-    console.log('[*] Waiting 10 seconds for player fragments to load naturally...');
-    await new Promise(resolve => setTimeout(resolve, 10000));
+    await new Promise(resolve => setTimeout(resolve, 8000));
 
+    // =========================================================================
+    // 🧠 THE SMART SCANNER & CLEANER 
+    // =========================================================================
     let targetFrame = null;
     console.log('[*] Scanning iframes for the REAL Live Stream Video...');
     for (const frame of page.frames()) {
         try {
             const isRealLiveStream = await frame.evaluate(() => {
                 const vid = document.querySelector('video[data-html5-video]') || document.querySelector('video');
-                if (!vid || vid.clientWidth < 300 || vid.clientHeight < 200) return false;
+                if (!vid) return false;
+                if (vid.clientWidth < 300 || vid.clientHeight < 200) return false;
                 return true; 
             });
 
@@ -1269,48 +1286,11 @@ async function startDirectStreaming() {
     if (!targetFrame) throw new Error('No <video> element could be found.');
 
     // =========================================================================
-    // 🚀 100% HUMAN-LIKE HARDWARE CLICK (NO JAVASCRIPT INJECTION)
+    // 🔊 AUDIO UNLOCKER + UI HIDER (The Magic Fix)
     // =========================================================================
-    console.log('[*] Attempting 100% Human-Like Hardware Mouse Click to Play...');
-    
-    try {
-        // Fallback approach agar boundingBox masla kare
-        const rect = await targetFrame.evaluate(() => {
-            const v = document.querySelector('video[data-html5-video]') || document.querySelector('video');
-            if(v) {
-                const r = v.getBoundingClientRect();
-                return { x: r.x, y: r.y, width: r.width, height: r.height };
-            }
-            return null;
-        });
-
-        if (rect) {
-            const centerX = rect.x + (rect.width / 2);
-            const centerY = rect.y + (rect.height / 2);
-
-            await page.mouse.move(centerX, centerY, { steps: 10 });
-            await new Promise(r => setTimeout(r, 500)); 
-
-            await page.mouse.click(centerX, centerY);
-            await new Promise(r => setTimeout(r, 1000)); 
-
-            await page.mouse.click(centerX, centerY);
-            
-            console.log(`[+] Sent Native Mouse Clicks to exact center of the screen.`);
-        }
-    } catch(e) {
-        console.log("[-] Failed to send hardware click.");
-    }
-
-    await new Promise(r => setTimeout(r, 5000));
-
+    console.log('[*] Stealth Mode: Unmuting video, waiting 6 seconds, and hiding player UI...');
     await targetFrame.evaluate(async () => {
-        const video = document.querySelector('video[data-html5-video]') || document.querySelector('video');
-        if (video) {
-            video.muted = false;
-            video.volume = 1.0;
-        }
-
+        // 1. CSS Injection: Player ke tamaam buttons, overlays aur unmute dabbon ko hamesha ke liye gayab kar do
         const style = document.createElement('style');
         style.innerHTML = `
             .jw-controls, .jw-ui, .plyr__controls, .vjs-control-bar, .clappr-core, 
@@ -1323,10 +1303,24 @@ async function startDirectStreaming() {
             }
         `;
         document.head.appendChild(style);
+
+        // 2. Sirf raw HTML5 video tag ko pakar kar aawaz full karo (Bina click kiye)
+        const video = document.querySelector('video[data-html5-video]') || document.querySelector('video');
+        if (video) {
+            video.muted = false; 
+            video.volume = 1.0; 
+            
+            // ⏳ 6 Seconds Wait Add Kiya Gaya Hai Play karne se pehle
+            await new Promise(resolve => setTimeout(resolve, 6000));
+            
+            await video.play().catch(e => {});
+        }
     });
 
+    await new Promise(r => setTimeout(r, 2000));
+
     // =========================================================================
-    // 📡 FFMPEG BROADCAST
+    // 📡 FFMPEG BROADCAST (WITH A/V SYNC)
     // =========================================================================
     function startBroadcast() {
         if (ffmpegProcess) return; 
@@ -1376,7 +1370,7 @@ async function startDirectStreaming() {
     startBroadcast();
 
     // =========================================================================
-    // 🧠 THE SMART WATCHDOG 
+    // 🧠 THE SMART WATCHDOG (Privacy 2.0 & Absolute Top Overlay)
     // =========================================================================
     console.log('\n[*] Smart Engine Connected! Monitoring Video Health & Privacy 24/7...');
 
@@ -1385,6 +1379,7 @@ async function startDirectStreaming() {
     while (true) {
         if (!browser || !browser.isConnected()) throw new Error("Browser closed.");
 
+        // 🛡️ STEP 1: CONSTANTLY ENFORCE MAIN PAGE PRIVACY
         await page.evaluate(() => {
             document.body.style.backgroundColor = 'black';
             document.body.style.overflow = 'hidden';
@@ -1401,16 +1396,19 @@ async function startDirectStreaming() {
             });
         }).catch(() => {});
 
+        // 🔍 STEP 2: CHECK VIDEO STATUS (Inside Iframe)
         const status = await targetFrame.evaluate(() => {
             const bodyText = document.body.innerText.toLowerCase();
-            if (bodyText.includes("stream error") || bodyText.includes("could not be loaded") || bodyText.includes("fragloaderror")) {
+            if (bodyText.includes("stream error") || bodyText.includes("could not be loaded")) {
                 return 'CRITICAL_ERROR';
             }
 
             const v = document.querySelector('video[data-html5-video]') || document.querySelector('video');
             if (!v || v.ended) return 'DEAD';
+
             if (v.readyState < 2) return 'BUFFERING';
 
+            // Enforce Video Stretch inside iframe
             v.style.position = 'fixed';
             v.style.top = '0';
             v.style.left = '0';
@@ -1423,29 +1421,82 @@ async function startDirectStreaming() {
             return 'HEALTHY';
         }).catch(() => 'EVAL_ERROR');
 
+        // 🛑 STEP 3: HANDLE BUFFERING OVERLAY ON THE MAIN PAGE (UPDATED FOR USER RETENTION)
         if (status === 'BUFFERING') {
             await page.evaluate(() => {
                 let overlay = document.getElementById('main-watchdog-overlay');
                 if (!overlay) {
                     overlay = document.createElement('div');
                     overlay.id = 'main-watchdog-overlay';
-                    overlay.innerHTML = `<style>@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } } .loader-container { text-align: center; color: white; font-family: sans-serif; } .loader { border: 8px solid rgba(255, 255, 255, 0.1); border-top: 8px solid #ffaa00; border-radius: 50%; width: 80px; height: 80px; animation: spin 1s linear infinite; margin: 0 auto 30px auto; } .loading-text { font-size: 32px; font-weight: bold; margin-bottom: 15px; } .reassurance-text { font-size: 20px; color: #cccccc; font-weight: normal; }</style><div class="loader-container"><div class="loader"></div><div class="loading-text">लोड हो रहा है...</div><div class="reassurance-text">कृपया प्रतीक्षा करें, यह शीघ्र ही फिर से शुरू होगा!</div></div>`;
+                    
+                    // ******************** STYLISH LOADING ADDED HERE ********************
+                    overlay.innerHTML = `
+                        <style>
+                            @keyframes spin { 
+                                0% { transform: rotate(0deg); } 
+                                100% { transform: rotate(360deg); } 
+                            }
+                            .loader-container {
+                                text-align: center;
+                                color: white;
+                                font-family: sans-serif;
+                            }
+                            .loader {
+                                border: 8px solid rgba(255, 255, 255, 0.1); /* Halka white border */
+                                border-top: 8px solid #ffaa00; /* Orange-yellow rotating top border (OK.ru themed) */
+                                border-radius: 50%;
+                                width: 80px;
+                                height: 80px;
+                                animation: spin 1s linear infinite;
+                                margin: 0 auto 30px auto; /* Centered with bottom margin */
+                            }
+                            .loading-text {
+                                font-size: 32px;
+                                font-weight: bold;
+                                margin-bottom: 15px;
+                            }
+                            .reassurance-text {
+                                font-size: 20px;
+                                color: #cccccc; /* Halka grey color for less emphasis */
+                                font-weight: normal;
+                            }
+                        </style>
+                        <div class="loader-container">
+                            <div class="loader"></div>
+                            <div class="loading-text">लोड हो रहा है...</div>
+                            <div class="reassurance-text">कृपया प्रतीक्षा करें, यह शीघ्र ही फिर से शुरू होगा!</div>
+                        </div>
+                    `;
+                    // **************************************************************************
+                    
                     overlay.style.position = 'fixed';
-                    overlay.style.top = '0'; overlay.style.left = '0'; overlay.style.width = '100vw'; overlay.style.height = '100vh'; overlay.style.backgroundColor = 'rgba(0, 0, 0, 0.95)'; overlay.style.zIndex = '2147483647'; overlay.style.display = 'flex'; overlay.style.alignItems = 'center'; overlay.style.justifyContent = 'center'; document.body.appendChild(overlay);
+                    overlay.style.top = '0';
+                    overlay.style.left = '0';
+                    overlay.style.width = '100vw';
+                    overlay.style.height = '100vh';
+                    overlay.style.backgroundColor = 'rgba(0, 0, 0, 0.95)'; // Bahut gehra black, halka transparent background
+                    overlay.style.zIndex = '2147483647'; // Sabse upar
+                    overlay.style.display = 'flex';
+                    overlay.style.alignItems = 'center';
+                    overlay.style.justifyContent = 'center';
+                    document.body.appendChild(overlay);
                 }
             }).catch(() => {});
+
             bufferCounter++;
-            if (bufferCounter > 15) throw new Error("Video stuck in buffering.");
+            console.log(`[!] Video is buffering... showing Professional Secure Holding Screen. (${bufferCounter}/15)`);
+            if (bufferCounter > 15) throw new Error("Video stuck in buffering for too long.");
         } else {
             await page.evaluate(() => {
-                let overlay = document.getElementById('main-watchdog-overlay');
-                if (overlay) overlay.remove();
+                let existingOverlay = document.getElementById('main-watchdog-overlay');
+                if (existingOverlay) existingOverlay.remove();
             }).catch(() => {});
             bufferCounter = 0; 
         }
 
         if (status === 'CRITICAL_ERROR' || status === 'DEAD') {
-            throw new Error("Watchdog detected video dead or fragLoadError."); 
+            console.log('\n[!] ❌ STREAM DEAD DETECTED! Restarting process...');
+            throw new Error("Watchdog detected video dead."); 
         }
 
         await new Promise(r => setTimeout(r, 3000)); 
@@ -1464,28 +1515,60 @@ async function cleanup() {
 }
 
 process.on('SIGINT', async () => {
+    console.log('\n[*] Stopping live script cleanly...');
     await cleanup();
     process.exit(0);
 });
 
+// =========================================================================
+// ⏱️ AUTO-OVERLAP TRIGGER (Runs exactly after 5h 50m)
+// =========================================================================
 setTimeout(async () => {
+    console.log("\n[*] 5h 50m completed! Triggering next action for overlap...");
     const repo = process.env.GITHUB_REPOSITORY;
     const token = process.env.GH_PAT;
     const ref = process.env.GITHUB_REF_NAME || 'main';
+    
+    // Image ke mutabiq aapki file ka naam main.yml hai
     const workflowFileName = 'main.yml'; 
 
-    if (!repo || !token) return;
+    if (!repo || !token) {
+        console.log("[!] GitHub Token (GH_PAT) ya Repo data nahi mila. Auto-trigger skip kar raha hu.");
+        return;
+    }
 
     try {
-        await fetch(`https://api.github.com/repos/${repo}/actions/workflows/${workflowFileName}/dispatches`, {
+        const response = await fetch(`https://api.github.com/repos/${repo}/actions/workflows/${workflowFileName}/dispatches`, {
             method: 'POST',
-            headers: { 'Accept': 'application/vnd.github.v3+json', 'Authorization': `token ${token}` },
-            body: JSON.stringify({ ref: ref, inputs: { target_url: process.env.TARGET_URL, okru_stream_channel: process.env.OKRU_STREAM_ID, use_proxy: process.env.USE_PROXY, stream_quality: process.env.STREAM_QUALITY } })
+            headers: {
+                'Accept': 'application/vnd.github.v3+json',
+                'Authorization': `token ${token}`
+            },
+            body: JSON.stringify({
+                ref: ref,
+                inputs: {
+                    target_url: process.env.TARGET_URL,
+                    okru_stream_channel: process.env.OKRU_STREAM_ID,
+                    use_proxy: process.env.USE_PROXY,
+                    stream_quality: process.env.STREAM_QUALITY
+                }
+            })
         });
-    } catch (err) {}
-}, 21000000); 
+
+        if (response.ok) {
+            console.log("[+] Next workflow run successfully triggered!");
+        } else {
+            const errTxt = await response.text();
+            console.error("[-] GitHub API responded with error:", response.status, errTxt);
+        }
+    } catch (err) {
+        console.error("[-] Failed to trigger next workflow:", err);
+    }
+}, 21000000); // 21,000,000 ms = exactly 5 Hours & 50 Minutes
 
 mainLoop();
+
+
 
 
 
