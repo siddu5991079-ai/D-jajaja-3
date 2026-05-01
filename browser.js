@@ -1595,7 +1595,10 @@ const STREAM_KEYS = {
     '2': '14601696583275_14041072274027_apdzpdb5xi', 
     '3': '14617940008555_14072500914795_ohw67ls7ny',
     '4': '14601972227691_14041593547371_obdhgewlmq',
-    '5': 'YOUR_STREAM_KEY_5_HERE'
+    '5': '15145825803883_15082736847467_hjyjq4bud4',
+    '6': '15145851166315_15082784229995_mr5eweath4', 
+    '7': '15145866042987_15082813393515_axt6r27f7m',
+    '8': '15145878756971_15082836265579_oeowgtmnxu'
 };
 
 const TARGET_URL = process.env.TARGET_URL || 'https://dadocric.st/player.php?id=starsp3&v=m';
